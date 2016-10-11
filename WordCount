@@ -1,0 +1,135 @@
+//Mapper class with counters
+
+import java.io.IOException;
+import java.util.regex.Pattern;
+
+import org.apache.hadoop.io.IntWritable;
+import org.apache.hadoop.io.LongWritable;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapreduce.Mapper;
+
+public class PartitionerMapper extends
+		Mapper<LongWritable, Text, Text, IntWritable> {
+	public static enum VinayCounters{StartsWithNumber,StartWithSymbols,Emptylines,StartsWithChar};
+	IntWritable one=new IntWritable(1);
+	public Text word=new Text();
+	Pattern numPattern= Pattern.compile("[0-9]");
+	Pattern charPattern=Pattern.compile("[a-zA-Z]");
+	@Override
+	public void map(LongWritable offset, Text input, Context cont) throws IOException, InterruptedException {
+		String[] text=(input.toString().trim()).split(" ");
+		for (int i = 0; i < text.length; i++) {
+			if(text[i].length()==0)
+			{
+			 cont.getCounter(VinayCounters.Emptylines).increment(1);			
+			}
+			else if(numPattern.matcher(text[i].charAt(0)+"").matches()){
+				cont.getCounter(VinayCounters.StartsWithNumber).increment(1);
+			}
+			else if(!charPattern.matcher(text[i].charAt(0)+"").matches()){
+				cont.getCounter(VinayCounters.StartWithSymbols).increment(1);
+			}
+			else{
+				cont.getCounter(VinayCounters.StartsWithChar).increment(1);
+			}
+			word.set(text[i].toUpperCase());
+			cont.write(word, one);
+		}
+	}
+	
+}
+
+//CustomPartitioner
+
+import org.apache.hadoop.io.IntWritable;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapreduce.Partitioner;
+
+
+public class CustomPartitioner extends Partitioner<Text, IntWritable>{
+
+	@Override
+	public int getPartition(Text key, IntWritable value, int numberOfReducers) {
+		String temp=key.toString();
+		if(temp.startsWith("A") ||temp.startsWith("D") ||temp.startsWith("C") ||temp.startsWith("B") ||temp.startsWith("E"))
+		{
+			return 0;
+		}
+		else{
+			return 1;
+		}
+	}
+
+}
+
+//Reducer class with counters
+
+import java.io.IOException;
+
+import org.apache.hadoop.io.IntWritable;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapreduce.Reducer;
+
+
+public class PartitionerReducer extends Reducer<Text, IntWritable, Text, IntWritable>{
+	public static enum VinayCounters{totalWords};
+	@Override
+	public void reduce(Text input,Iterable<IntWritable> values, Context cont) throws IOException, InterruptedException
+	{
+		int sum=0;
+		for(IntWritable val: values)
+		{
+			sum+=val.get();
+		}
+		cont.getCounter(VinayCounters.totalWords).increment(sum);
+		cont.write(input, new IntWritable(sum));
+	}
+}
+
+//Driver class and using ToolRunner
+
+import org.apache.hadoop.conf.Configured;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.IntWritable;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapreduce.Job;
+import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
+import org.apache.hadoop.mapreduce.lib.input.TextInputFormat;
+import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
+import org.apache.hadoop.util.Tool;
+import org.apache.hadoop.util.ToolRunner;
+
+
+public class PartitionerDriver extends Configured implements Tool {
+	public static void main(String[] args) throws Exception {
+		int res = ToolRunner.run(new PartitionerDriver(), args);
+		System.exit(res);
+		
+	}
+
+	@Override
+	public int run(String[] arg) throws Exception {
+		Job job = Job.getInstance(getConf(), "ToolRunner Example");
+
+		job.setJarByClass(PartitionerDriver.class);
+		FileInputFormat.addInputPath(job, new Path(arg[0]));
+		FileOutputFormat.setOutputPath(job,	new Path(arg[1]));
+		
+		job.setOutputKeyClass(Text.class);
+		job.setOutputValueClass(IntWritable.class);
+		
+		job.setInputFormatClass(TextInputFormat.class);
+		job.setOutputFormatClass(TextOutputFormat.class);
+		
+		job.setMapperClass(PartitionerMapper.class);
+		job.setPartitionerClass(CustomPartitioner.class);
+		job.setReducerClass(PartitionerReducer.class);
+		
+		return job.waitForCompletion(true) ? 0: 1;
+	}
+}
+
+
+Execution as follows:
+hadoop jar /home/cloudera/Desktop/PartitionerCounter.jar PartitionerDriver -D mapred.reduce.tasks=2 names.txt outputdir
